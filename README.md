@@ -38,18 +38,80 @@ When you watch or upload a video on the internet, several simple but critical ch
 
 ---
 
-## 3. Scale Estimations (Simple Numbers)
+## 3. Scale Estimations & Detailed Calculations
 
-To understand the system's size, let us look at a platform with 100 Million daily active users:
+Below is the complete mathematical breakdown of traffic, storage, and network bandwidth for a system serving 100 Million Daily Active Users (DAU).
 
-* **Daily Video Uploads:** 500,000 new videos per day.
-* **Average Video Length:** 10 minutes.
-* **Daily Total Views:** 1 Billion views per day.
-* **Storage Needed Daily:**
-  * Raw uploaded files = ~250 Terabytes per day.
-  * Converted formats (1080p, 720p, 480p, etc.) = ~350 Terabytes per day.
-  * Total new storage needed each day = ~600 Terabytes.
-* **Peak Streaming Bandwidth:** During busy evening hours, around 7 Million people watch videos at the exact same second. Global distribution networks (CDNs) handle this load.
+---
+
+### 3.1 Traffic & Request Rates (QPS)
+
+* **Daily Active Users (DAU):** 100 Million
+* **Daily Video Uploads:** 500,000 videos / day
+* **Daily Video Views:** 1 Billion views / day (average 10 views per user)
+* **Average Video Length:** 10 minutes (600 seconds)
+
+#### Uploads per Second (Upload QPS)
+$$\text{Average Upload QPS} = \frac{500,000 \text{ uploads}}{86,400 \text{ seconds/day}} \approx 5.78 \text{ uploads/second}$$
+$$\text{Peak Upload QPS (3x peak factor)} = 5.78 \times 3 \approx 17.3 \text{ uploads/second}$$
+
+#### Video Views per Second (Playback QPS)
+$$\text{Average View QPS} = \frac{1,000,000,000 \text{ views}}{86,400 \text{ seconds/day}} \approx 11,574 \text{ views/second}$$
+$$\text{Peak View QPS (3x peak factor)} = 11,574 \times 3 \approx 34,722 \text{ views/second}$$
+
+---
+
+### 3.2 Storage Calculations
+
+#### Step 1: Raw Video Upload Size
+* Average raw 1080p video bitrate = **6.67 Mbps**
+* Size of one 10-minute raw video:
+  $$\text{Raw File Size} = 600 \text{ seconds} \times \frac{6.67 \text{ Megabits/sec}}{8 \text{ bits/byte}} = 600 \times 0.833 \text{ MB/sec} \approx 500 \text{ MB}$$
+
+* Total daily raw storage:
+  $$\text{Daily Raw Storage} = 500,000 \text{ uploads} \times 500 \text{ MB} = 250,000,000 \text{ MB} = 250 \text{ TB / day}$$
+
+#### Step 2: Converted (Transcoded) Resolutions Size
+Each uploaded video is converted into 4 quality levels for adaptive streaming:
+
+| Resolution | Video Bitrate | Formula | Size for 10-min Video |
+| :--- | :--- | :--- | :--- |
+| **1080p (Full HD)** | 4.5 Mbps | $600 \text{s} \times (4.5 / 8) \text{ MB/s}$ | $337.5 \text{ MB}$ |
+| **720p (HD)** | 2.2 Mbps | $600 \text{s} \times (2.2 / 8) \text{ MB/s}$ | $165.0 \text{ MB}$ |
+| **480p (SD)** | 1.0 Mbps | $600 \text{s} \times (1.0 / 8) \text{ MB/s}$ | $75.0 \text{ MB}$ |
+| **360p (Low)** | 0.5 Mbps | $600 \text{s} \times (0.5 / 8) \text{ MB/s}$ | $37.5 \text{ MB}$ |
+| **Total Converted per Video** | — | **Sum of all 4 resolutions** | **615.0 MB** |
+
+* Total daily converted storage:
+  $$\text{Daily Transcoded Storage} = 500,000 \text{ uploads} \times 615 \text{ MB} = 307,500,000 \text{ MB} = 307.5 \text{ TB / day}$$
+
+#### Step 3: Total Combined Daily & Annual Storage
+$$\text{Total Daily Storage} = 250 \text{ TB (Raw)} + 307.5 \text{ TB (Transcoded)} = 557.5 \text{ TB / day}$$
+$$\text{1-Year Storage Required} = 557.5 \text{ TB/day} \times 365 \text{ days} \approx 203,487 \text{ TB} \approx 203.5 \text{ Petabytes (PB) / year}$$
+
+---
+
+### 3.3 Network Bandwidth Calculations
+
+#### Inbound Upload Bandwidth (Ingestion)
+$$\text{Average Inbound Bandwidth} = \frac{250 \text{ TB} \times 8 \times 10^6 \text{ Megabits}}{86,400 \text{ seconds}} \approx 23,148 \text{ Mbps} \approx 23.15 \text{ Gbps}$$
+$$\text{Peak Inbound Bandwidth (2.5x)} = 23.15 \text{ Gbps} \times 2.5 \approx 57.87 \text{ Gbps}$$
+
+#### Outbound Streaming Bandwidth (Egress via CDN)
+* Average daily watch time per user = **30 minutes**
+* Total viewing time per day across all users:
+  $$\text{Total Daily Watch Time} = 100,000,000 \text{ users} \times 30 \text{ minutes} = 3,000,000,000 \text{ minutes / day}$$
+
+* Average concurrent video streams running at any given minute:
+  $$\text{Average Concurrent Streams} = \frac{3,000,000,000 \text{ minutes}}{1,440 \text{ minutes in a day}} \approx 2,083,333 \text{ active streams}$$
+
+* Peak concurrent streams during busy evening hours (3.5x peak factor):
+  $$\text{Peak Concurrent Streams} = 2,083,333 \times 3.5 \approx 7,291,665 \text{ streams} \approx 7.3 \text{ Million streams}$$
+
+* Average playback bitrate across all viewers (mix of 1080p, 720p, 480p) = **2.5 Mbps**:
+  $$\text{Peak Egress Bandwidth} = 7,291,665 \text{ streams} \times 2.5 \text{ Mbps} = 18,229,162 \text{ Mbps} \approx 18.23 \text{ Terabits per second (Tbps)}$$
+
+> **Key Takeaway:** Delivering **18.23 Tbps** directly from central data centers is impossible and cost-prohibitive. This traffic is served by caching video slices on global **Content Delivery Networks (CDNs)** near the users.
 
 ---
 
