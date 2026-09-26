@@ -1,218 +1,148 @@
-# System Design: Distributed Video Streaming & Transcoding Platform
+# System Design: Video Streaming Platform
 
-A highly scalable, fault-tolerant video processing and on-demand streaming architecture (similar to YouTube or Netflix) designed to ingest, transcode, store, and stream millions of concurrent video streams globally with ultra-low latency, zero buffering, and adaptive bitrate switching.
+A practical, beginner-friendly system design of a large-scale video streaming and processing platform (like YouTube or Netflix). It explains how videos are uploaded, processed into multiple video qualities, stored, and streamed smoothly across the world without buffering.
 
 ---
 
-## 1. Problem Statement
+## 1. The Core Problem
 
-Building an Internet-scale video platform presents unique architectural challenges that differ fundamentally from standard transactional CRUD services:
-- **Massive Binary Ingestion**: Millions of creators uploading multi-gigabyte raw video files concurrently over unreliable networks.
-- **Heavy Compute Workloads**: Transcoding high-resolution source videos (4K, 1080p) into dozens of codecs (H.264, VP9, AV1), resolutions, and bitrates is CPU/GPU intensive and requires distributed DAG orchestration.
-- **Zero Buffering & Adaptive Streaming**: Millions of global viewers stream videos over unpredictable network conditions (ranging from 3G mobile to gigabit fiber), requiring instant quality switching (ABR - Adaptive Bitrate Streaming via HLS/DASH).
-- **Petabyte-Scale Storage & High CDN Costs**: Video represents >65% of global internet bandwidth. Storage and bandwidth costs must be optimized through intelligent tiered caching and hot/cold storage lifecycle management.
+When you watch or upload a video on the internet, several simple but critical challenges happen:
+
+1. **Different Internet Speeds:** One viewer has fast fiber Wi-Fi, while another has a weak mobile signal. If we send the same heavy 4K file to everyone, slow internet users will experience constant buffering.
+2. **Different Screen Sizes:** A mobile phone screen does not need a massive 4K file, while a 65-inch Smart TV needs high definition.
+3. **Large File Uploads:** Uploading a large video (1 GB or more) over home internet can fail midway. The system must allow resuming the upload from where it stopped instead of starting over.
+4. **Fast Delivery Worldwide:** Viewers should not experience delays or waiting times, no matter where they are located.
 
 ---
 
 ## 2. System Requirements
 
-### Functional Requirements
+### Functional Requirements (What the system does)
 
-| Requirement | Description |
+| Requirement | What it Means |
 | :--- | :--- |
-| **Resumable Chunked Upload** | Creators can upload large video files in chunks with automatic retry on network drops. |
-| **Distributed Transcoding** | Ingested raw video is automatically split, transcoded into multiple formats/resolutions, and packaged into HLS/DASH playlists. |
-| **Adaptive Bitrate Streaming (ABR)** | Viewers can stream video smoothly; quality switches seamlessly between 240p to 4K based on available bandwidth. |
-| **Video Metadata & Search** | Users can search, view metadata, like, comment, and track video view counts in real time. |
-| **Thumbnails & Storyboard Generation** | Auto-extracts high-res preview thumbnails and scrub-bar storyboards during transcoding. |
+| **Resumable Upload** | Creators can upload large video files in small chunks. If the internet disconnects, the upload continues from where it stopped. |
+| **Video Processing (Transcoding)** | The system converts one uploaded video into multiple quality levels (1080p, 720p, 480p, 360p). |
+| **Adaptive Quality Streaming** | The video automatically adjusts its quality based on the viewer's current internet speed (faster internet = better quality, slower internet = lower quality without stopping). |
+| **Video Details & Search** | Users can search videos, view titles and descriptions, like, and track view counts. |
+| **Thumbnails & Preview** | The system automatically creates preview images (thumbnails) and hover previews. |
 
-### Non-Functional Requirements
+### Non-Functional Requirements (How well it performs)
 
-| Requirement | Target Metric | Architectural Approach |
+| Requirement | Target | Simple Explanation |
 | :--- | :--- | :--- |
-| **Low Playback Startup Latency** | Time-to-first-frame < 200ms | CDN edge caching, pre-warmed connections, optimized initial chunk size (2s-4s). |
-| **High Availability** | 99.99% playback availability | Multi-region CDN routing, geo-distributed object storage replicas. |
-| **Scalability** | 100M+ DAU, 1M concurrent streams | Stateless API tier, asynchronous Kafka/SQS task queues, auto-scaling worker fleet. |
-| **Data Durability & Reliability** | Zero raw/transcoded video loss | Erasure-coded multi-AZ object storage (S3/GCS) with lifecycle policies. |
-| **Bandwidth & Cost Efficiency** | Minimized egress costs | Tiered CDN caching (Edge Point-of-Presence -> Regional Shield -> Origin), modern codecs (AV1/VP9). |
+| **Fast Video Start** | Under 1 second | When a user clicks play, the first video frame should appear almost instantly. |
+| **High Availability** | 99.99% uptime | The website and video player should always work without going down. |
+| **Scalability** | Millions of viewers | The system can handle sudden traffic spikes when a video goes viral. |
+| **Smooth Playback** | No buffering | Video quality drops smoothly instead of freezing when internet speed drops. |
 
 ---
 
-## 3. Scale & Capacity Estimations
+## 3. Scale Estimations (Simple Numbers)
 
-### User & Traffic Numbers
-- **Daily Active Users (DAU)**: 100 Million
-- **Daily Video Uploads**: 500,000 videos/day
-- **Average Video Duration**: 10 minutes
-- **Raw Upload Size**: ~500 MB average (1080p raw upload)
-- **Daily View Count**: 1 Billion views/day
-- **Average Viewing Time per User**: 30 minutes/day
+To understand the system's size, let us look at a platform with 100 Million daily active users:
 
-### Storage & Ingestion Estimations
-```text
-Daily Raw Ingest:
-  500,000 videos * 500 MB = 250 TB / day
-  Ingest Bandwidth = 250 TB / 86,400s ≈ 23 Gbps average (Peak ~60 Gbps)
-
-Transcoding Multiplier:
-  Each video is encoded into 5 resolutions (1080p, 720p, 480p, 360p, 240p).
-  Total transcoded storage ≈ 1.5x raw size = 375 TB / day.
-  Annual Storage Required ≈ 375 TB * 365 ≈ 136.8 PB / year.
-
-Streaming Egress Bandwidth:
-  Average Bitrate (Across 720p/1080p mix) ≈ 2.5 Mbps
-  Total Concurrent Viewers at Peak (10% DAU) = 10,000,000 concurrent streams
-  Peak CDN Egress Bandwidth = 10M streams * 2.5 Mbps = 25 Tbps (Handled by Global CDNs)
-```
+* **Daily Video Uploads:** 500,000 new videos per day.
+* **Average Video Length:** 10 minutes.
+* **Daily Total Views:** 1 Billion views per day.
+* **Storage Needed Daily:**
+  * Raw uploaded files = ~250 Terabytes per day.
+  * Converted formats (1080p, 720p, 480p, etc.) = ~350 Terabytes per day.
+  * Total new storage needed each day = ~600 Terabytes.
+* **Peak Streaming Bandwidth:** During busy evening hours, around 7 Million people watch videos at the exact same second. Global distribution networks (CDNs) handle this load.
 
 ---
 
-## 4. High-Level Architecture
+## 4. How the System Works (Step-by-Step)
 
 ```mermaid
 flowchart TD
-    subgraph Ingestion & Upload
-        Creator[Video Creator / Mobile App] -->|1. Get Signed Multipart URL| API[API Gateway]
-        API --> UploadService[Upload Orchestration Service]
-        Creator -->|2. Direct Chunked Upload| S3Raw[(Raw S3 Bucket)]
-        S3Raw -->|3. ObjectCreated Event| UploadService
+    Creator[Video Creator] -->|1. Upload in small chunks| Storage[(Cloud Storage - S3)]
+    Storage -->|2. Video Uploaded Event| Queue[Task Queue]
+    Queue -->|3. Send job| Workers[Processing Workers]
+    
+    subgraph Video Processing
+        Workers --> Split[Cut video into 4-second slices]
+        Split --> Convert[Convert to 1080p, 720p, 480p]
+        Convert --> Playlist[Create Master Playlist file]
     end
-
-    subgraph Distributed Transcoding Pipeline
-        UploadService -->|4. Publish Transcode Job| Kafka[Kafka Job Queue]
-        Kafka --> Coordinator[Transcoding DAG Coordinator]
-        Coordinator --> Splitter[Video Chunk Splitter]
-        Splitter --> WorkerFleet[Distributed Transcoding Workers - GPU/CPU]
-        WorkerFleet --> Stitcher[HLS/DASH Manifest Stitcher & Packager]
-        Stitcher --> S3Processed[(Processed S3 Bucket - Chunks & .m3u8)]
-    end
-
-    subgraph Metadata & Realtime
-        UploadService --> VideoDB[(Video Metadata DB - PostgreSQL/Cassandra)]
-        WorkerFleet -->|Status Updates| Redis[(Redis Job Cache & PubSub)]
-        Coordinator --> PushGateway[WebSocket Notification Gateway]
-        PushGateway --> Creator
-    end
-
-    subgraph Delivery & Playback
-        Viewer[Video Viewer / Player] -->|5. Request Manifest & Chunks| CDN[Global CDN / Edge Cache]
-        CDN -->|Cache Miss| S3Processed
-    end
+    
+    Playlist --> OutputStorage[(Processed Storage)]
+    OutputStorage --> CDN[CDN - Local Cache Servers]
+    CDN -->|4. Smooth Streaming| Viewer[Viewer]
 ```
+
+### Step 1: Uploading the Video
+Instead of sending a huge file in one piece, the creator's browser breaks the file into small 8 MB parts. Each part is sent directly to cloud storage. If a single part fails, only that 8 MB part is retried.
+
+### Step 2: Breaking the Video into Slices
+A 10-minute video is split into hundreds of 4-second small slices. Multiple background worker computers process these slices at the same time, which makes video conversion very fast.
+
+### Step 3: Creating Multiple Qualities
+Each slice is converted into standard resolutions:
+* 1080p (Full HD - for fast Wi-Fi)
+* 720p (HD - for standard internet)
+* 480p (SD - for mobile data)
+* 360p (Low - for weak signals)
+
+### Step 4: Creating the Playlist File (.m3u8)
+The system creates an index text file (called a Playlist or Manifest). This file acts like a table of contents, telling the video player where each 4-second slice is located for each quality level.
+
+### Step 5: Delivering through CDNs
+Instead of every viewer fetching video files from one central server, copies of popular video slices are stored on local servers (CDNs) close to the user's city.
 
 ---
 
-## 5. End-to-End Workflows
+## 5. What is Adaptive Bitrate Streaming (ABR)?
 
-### 5.1 Resumable Chunked Video Upload
-
-Direct-to-storage upload reduces API gateway load and avoids double-hop buffering:
+Adaptive Bitrate Streaming is the technology that stops video buffering:
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor Creator
-    participant Gateway as API Gateway
-    participant UploadSvc as Upload Service
-    participant S3 as Raw Object Storage (S3)
-    participant Kafka as Message Broker
+    participant Player as Video Player
+    participant CDN as CDN Server
 
-    Creator->>Gateway: POST /api/v1/videos/upload-session (file_size, checksum, mime)
-    Gateway->>UploadSvc: Initialize Upload Session
-    UploadSvc->>S3: Initiate Multipart Upload
-    S3-->>UploadSvc: upload_id & Presigned URLs for chunks
-    UploadSvc-->>Creator: upload_id, chunk_size (8MB), presigned_urls[]
+    Player->>CDN: Download Playlist (.m3u8)
+    CDN-->>Player: List of available qualities (1080p, 720p, 480p)
     
-    loop For each 8MB Chunk (Parallel)
-        Creator->>S3: PUT chunk_data (presigned_url, PartNumber, MD5)
-        S3-->>Creator: 200 OK (ETag)
-    end
-
-    Creator->>Gateway: POST /api/v1/videos/complete-upload (upload_id, parts[])
-    Gateway->>UploadSvc: Complete Multipart Upload
-    UploadSvc->>S3: CompleteMultipartUpload(upload_id, parts)
-    UploadSvc->>Kafka: Publish `VideoUploadedEvent`
-    UploadSvc-->>Creator: Upload Complete (Status: PROCESSING)
+    Note over Player: Internet is fast: Request 1080p slice
+    Player->>CDN: Get slice 1 (1080p)
+    CDN-->>Player: Video plays in Full HD
+    
+    Note over Player: Wi-Fi signal drops: Player notices delay
+    Note over Player: Switches automatically to 480p
+    Player->>CDN: Get slice 2 (480p)
+    CDN-->>Player: Video continues playing without stopping
 ```
 
----
-
-### 5.2 Distributed Transcoding DAG (Directed Acyclic Graph)
-
-A 10-minute video is not processed as a single monolithic file. It is broken into independent Group-of-Pictures (GOP) chunks and processed in parallel across hundreds of workers:
-
-```mermaid
-flowchart TD
-    RawFile[Raw 1080p MP4 Video] --> Demux[Audio/Video Demuxer & Keyframe Splitter]
-    
-    Demux --> Chunk1[Chunk 1: 00:00 - 02:00]
-    Demux --> Chunk2[Chunk 2: 02:00 - 04:00]
-    Demux --> Chunk3[Chunk 3: 04:00 - 06:00]
-    Demux --> AudioTrack[Audio Extraction: AAC 128kbps / Opus]
-    
-    Chunk1 --> Enc1_1080[1080p Worker]
-    Chunk1 --> Enc1_720[720p Worker]
-    Chunk1 --> Enc1_480[480p Worker]
-
-    Chunk2 --> Enc2_1080[1080p Worker]
-    Chunk2 --> Enc2_720[720p Worker]
-    Chunk2 --> Enc2_480[480p Worker]
-
-    Enc1_1080 & Enc2_1080 & Enc1_720 & Enc2_720 & AudioTrack --> Packager[HLS/DASH Packager]
-    Packager --> MasterPlaylist["Master Playlist (master.m3u8)"]
-    Packager --> TSChunks["Media Segments (.ts / .m4s)"]
-```
+1. The video player in your browser or phone downloads the first 4-second slice.
+2. It measures how fast that slice was downloaded.
+3. If your connection is fast, it asks for the next slice in **1080p**.
+4. If your connection slows down, it asks for the next slice in **480p**.
+5. The switch happens seamlessly in the background without any spinning wheel or playback stop.
 
 ---
 
-### 5.3 Adaptive Bitrate Streaming (ABR) Playback
+## 6. Project Documentation
 
-The client-side video player continually samples network throughput and buffer fill levels to request the optimal segment quality:
+Read detailed guides on every component of this design:
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Player as Video Player
-    participant CDN as CDN Edge
-    participant S3 as Origin Storage (S3)
-
-    Player->>CDN: GET /videos/{id}/master.m3u8
-    CDN-->>Player: Master Playlist (Bitrate Variants: 1080p, 720p, 480p)
-    
-    Note over Player: Player selects initial bitrate based on network check (e.g. 720p)
-    Player->>CDN: GET /videos/{id}/720p/index.m3u8
-    CDN-->>Player: Variant Playlist (List of segment URLs)
-    
-    Player->>CDN: GET /videos/{id}/720p/segment_001.ts
-    CDN-->>Player: Video Segment 1 (Buffer 0s-5s)
-    
-    Note over Player: Bandwidth drops! Player switches seamlessly to 480p
-    Player->>CDN: GET /videos/{id}/480p/segment_002.ts
-    CDN-->>Player: Video Segment 2 (Buffer 5s-10s)
-```
+* [System Architecture & Components](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/architecture.md)
+* [API Design & Endpoints](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/api_design.md)
+* [Capacity Planning & Math](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/capacity_planning.md)
+* [Transcoding Pipeline & Workflows](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/transcoding_pipeline_dag.md)
+* [HLS & DASH Streaming Explained](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/hls_dash_streaming.md)
+* [Database Schema & Data Model](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/database_schema.md)
+* [CDN & Caching Strategy](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/cdn_and_caching_strategy.md)
+* [Failure Handling & Recovery](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/failure_scenarios.md)
 
 ---
 
-## 6. Detailed Documentation
+## 7. Code & Examples
 
-Explore in-depth design documents for each component:
-
-* 📐 [Detailed Architecture & Component Deep Dive](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/architecture.md)
-* 🔌 [API Contracts & Endpoints](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/api_design.md)
-* 📊 [Capacity Planning & Bandwidth Math](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/capacity_planning.md)
-* ⚙️ [Distributed Transcoding DAG Pipeline](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/transcoding_pipeline_dag.md)
-* 📡 [HLS & DASH Adaptive Bitrate Streaming](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/hls_dash_streaming.md)
-* 🗄️ [Database Schema & Data Model](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/database_schema.md)
-* 🌐 [CDN & Edge Caching Strategy](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/cdn_and_caching_strategy.md)
-* 🛡️ [Failure Scenarios & Resilience](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/failure_scenarios.md)
-
----
-
-## 7. Examples & Reference
-
-* 📄 [Master & Variant HLS Playlist Sample](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/master_playlist.m3u8)
-* 📦 [Sample Transcoding Event Payload](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/sample_transcoding_job.json)
-* 💻 [Chunking & ABR Pseudo-code](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/pseudo_code.md)
+* [Sample HLS Master Playlist](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/master_playlist.m3u8)
+* [Sample Transcoding Task Event](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/sample_transcoding_job.json)
+* [Transcoder & Player Code Examples](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/pseudo_code.md)
 
 ---
 

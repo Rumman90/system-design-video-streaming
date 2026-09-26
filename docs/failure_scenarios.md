@@ -1,34 +1,34 @@
-# Failure Scenarios & Resilience Engineering
+# Failure Scenarios & Recovery
 
-This document analyzes system failure modes, blast radiuses, and self-healing recovery strategies across the video streaming pipeline.
-
----
-
-## 1. Failure Modes & Mitigations Matrix
-
-| Failure Mode | Impact | Detection Mechanism | Automated Mitigation / Recovery |
-| :--- | :--- | :--- | :--- |
-| **Creator upload connection drops at 98%** | Incomplete file in S3 | Client-side timeout / socket drop | Client resumes multipart upload from the last unacknowledged part using the original `upload_id`. No work lost. |
-| **Transcoder worker crashes (OOM / Spot Term)** | Incomplete chunk encoding | Redis lease expiry (no heartbeat for 60s) | DAG Coordinator detects un-leased chunk, re-queues task to another worker node. Chunk writes are idempotent. |
-| **Corrupted input video / Malformed codec** | Transcoding failure | FFmpeg exit code $\ne 0$ | Worker marks task as `FATAL_ERROR`, avoids infinite retry loops, and sets video status to `FAILED_CORRUPT_SOURCE`. |
-| **Primary CDN PoP outage** | Viewers in region face 5xx / timeout | Global Synthetic CDN Probing & Real-User Monitoring (RUM) | Geo-DNS / Anycast routes traffic immediately to secondary CDN provider (Multi-CDN failover). |
-| **Origin S3 rate limiting (503 Slow Down)** | High chunk miss latency | CloudWatch 503 error rate metrics | Origin Shield caches hot chunks; workers apply exponential backoff with full jitter on origin writes. |
-| **Database outage (Metadata DB down)** | Search & comments unavailable | Healthcheck probe fails | Read-only cache layer (Redis + CDN) continues serving video playback manifests and cached metadata without downtime. |
+This document explains what happens when different parts of the system break and how the system recovers automatically.
 
 ---
 
-## 2. Multi-CDN Failover Strategy
+## 1. Common Failures and How the System Fixes Them
 
-To ensure 99.999% global playback availability, the system employs an active-active Multi-CDN architecture (e.g., Cloudflare + Fastly + CloudFront):
+| What Went Wrong | What Happens | How the System Recovers |
+| :--- | :--- | :--- |
+| **Creator upload gets cut off at 95%** | Network drops on mobile/home Wi-Fi | The browser remembers which parts finished and resumes uploading only the missing 5%. |
+| **A worker computer crashes during conversion** | A 4-second slice is half-processed | The worker's 60-second lease expires in Redis. The system notices this and assigns the slice to another working computer. |
+| **Corrupted raw video file uploaded** | The video decoder cannot open the file | The worker marks the task as failed immediately with a clear error message, preventing endless retry loops. |
+| **A local CDN server goes down** | Users in that city get errors | Smart DNS automatically redirects traffic to the next closest healthy city server in seconds. |
+| **The main database goes down temporarily** | Search and comments are slow | Users can still stream videos without interruption because video playlists and files are cached independently on CDNs. |
+
+---
+
+## 2. Zero-Loss Upload Resumption
 
 ```mermaid
-flowchart TD
-    Player[Video Player] --> SmartDNS[Smart DNS / Client Telemetry SDK]
-    SmartDNS -->|Primary Route: Health Score 98%| Fastly[Fastly CDN]
-    SmartDNS -->|Fallback Route: Auto-switched on latency spike| Cloudflare[Cloudflare CDN]
-    
-    Fastly & Cloudflare --> Shield[Origin Shield]
-    Shield --> S3[Origin Media Bucket]
-```
+sequenceDiagram
+    participant User as Creator Device
+    participant Cloud as Cloud Storage
 
-* **Client-Side Fallback**: The video player SDK detects consecutive chunk download timeouts (>3 seconds). If 2 consecutive chunks fail on CDN A, the player automatically rewrites URLs to point to CDN B.
+    User->>Cloud: Upload Part 1 (8MB) - Success
+    User->>Cloud: Upload Part 2 (8MB) - Success
+    Note over User,Cloud: Internet disconnects during Part 3!
+    Note over User: Internet reconnects after 2 minutes
+    User->>Cloud: Check status: Parts 1 and 2 are safe
+    User->>Cloud: Resume from Part 3 (8MB) - Success
+    User->>Cloud: Upload Part 4 (8MB) - Success
+    Note over User: Full file uploaded without starting over
+```

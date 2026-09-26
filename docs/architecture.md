@@ -1,136 +1,124 @@
-# Architecture Deep Dive: Distributed Video Streaming Platform
+# System Architecture: Video Streaming Platform
 
-This document details the internal sub-systems, component communication patterns, and architectural trade-offs of the video ingestion, transcoding, and content delivery infrastructure.
+This document explains the main components of the video streaming system and how they talk to each other in simple terms.
 
 ---
 
-## 1. Architectural Tiers
+## 1. The Four Main Parts of the System
 
-The system is organized into four decoupled planes:
+To keep things organized, the system is split into four simple layers:
 
 ```mermaid
 graph TD
-    subgraph Control Plane
+    subgraph 1. User & Control Layer
         API[API Gateway]
-        Auth[Auth / Session Service]
-        MetadataSvc[Metadata & Search Service]
-        BillingSvc[Subscription / Ad Service]
+        Auth[User & Login Service]
+        MetadataSvc[Video Details Service]
     end
 
-    subgraph Ingestion & Processing Plane
-        UploadSvc[Upload Orchestrator]
-        DAGScheduler[Distributed DAG Coordinator]
-        WorkerFleet[Transcoding Worker Fleet]
-        Packager[HLS/DASH Manifest Packager]
+    subgraph 2. Video Processing Layer
+        UploadSvc[Upload Manager]
+        TaskQueue[Task Queue]
+        Workers[Transcoding Workers]
+        Packager[Playlist Packager]
     end
 
-    subgraph Storage Plane
-        RawS3[(Raw Ingest S3)]
-        ProcessedS3[(Segment & Playlist S3)]
-        DocDB[(Metadata Document DB)]
-        TimeDB[(Time-series View DB)]
-        Cache[(Redis Cache Cluster)]
+    subgraph 3. Storage Layer
+        RawStorage[(Raw Video Storage)]
+        ProcessedStorage[(Processed Video Slices)]
+        Database[(Metadata Database)]
+        Cache[(Redis Fast Cache)]
     end
 
-    subgraph Delivery & Edge Plane
-        DNS[Geo-DNS / Anycast Routing]
-        EdgeCDN[Global Edge CDN (PoPs)]
-        RegionalShield[Regional Origin Shield]
+    subgraph 4. Delivery Layer
+        CDN[Global CDN Edge Servers]
+        Viewer[Viewer App / Browser]
     end
 
     API --> MetadataSvc & UploadSvc
-    UploadSvc --> RawS3 & DAGScheduler
-    DAGScheduler --> WorkerFleet --> Packager --> ProcessedS3
-    DNS --> EdgeCDN --> RegionalShield --> ProcessedS3
+    UploadSvc --> RawStorage
+    UploadSvc --> TaskQueue --> Workers --> Packager --> ProcessedStorage
+    Viewer --> CDN --> ProcessedStorage
 ```
 
 ---
 
-## 2. Ingestion Plane: Direct-to-Storage Pattern
+## 2. Part 1: How Videos are Uploaded (Direct Upload)
 
-### Why Avoid Ingesting Through Application Gateways?
-Routing multi-gigabyte video uploads through standard HTTP API gateways introduces severe operational problems:
-- Gateways become memory and socket-bound, causing connection starvation for lightweight REST calls.
-- Proxy timeouts and connection drops abort long-running uploads.
-- Double data transfer: Client -> Gateway -> Storage doubles inbound bandwidth costs.
+### Why not upload directly to the main web server?
+If a creator uploads a 2 GB video through the normal website server, two bad things happen:
+* The web server gets busy holding this huge file in memory and slows down for everyone else.
+* If the user's connection drops at 95%, the whole upload is lost.
 
-### Presigned S3 Multipart Flow
-1. **Client Handshake**: Client requests an upload ticket with `file_size`, `filename`, and `sha256_hash`.
-2. **Session Initialization**: The `Upload Service` calls AWS S3 / GCS to initialize a Multipart Upload, creating an `upload_id` and generating pre-signed URLs for each 8MB to 16MB part.
-3. **Parallel Ingestion**: Client uploads parts directly to S3 concurrently (e.g., 4 parallel worker threads).
-4. **Completion & Validation**: Once all parts are uploaded, client sends a commit request. The Upload Service verifies part ETags and triggers S3 `CompleteMultipartUpload`.
+### The Solution: Direct Multipart Upload
+1. The user asks the API for permission to upload a video.
+2. The API gives the user special temporary upload links (called presigned URLs) directly to cloud storage (like Amazon S3).
+3. The user's browser breaks the video into 8 MB parts and uploads them directly to cloud storage in parallel.
+4. Once all parts finish, cloud storage puts the parts together into the final raw file and informs the system.
 
 ---
 
-## 3. Distributed Processing Plane (DAG Orchestrator)
+## 3. Part 2: How Videos are Processed (Transcoding)
 
-### The Splitting & Transcoding Pipeline
-Transcoding an entire 2-hour 4K movie on a single machine takes hours. Our architecture breaks media down into independent **Group of Pictures (GOP)** segments at keyframe boundaries.
+Transcoding means converting one video into multiple resolutions and formats.
 
 ```mermaid
 flowchart LR
-    Upload[Raw Video Uploaded] --> Demux[Keyframe Aligned Splitter]
-    Demux --> Chunk1[Chunk 1: 0-60s]
-    Demux --> Chunk2[Chunk 2: 60-120s]
-    Demux --> ChunkN[Chunk N: ...]
+    Source[Raw 1080p Video] --> Cutter[Cut into 4-Second Slices]
     
-    Chunk1 --> T1[Worker: 1080p, 720p, 480p]
-    Chunk2 --> T2[Worker: 1080p, 720p, 480p]
-    ChunkN --> TN[Worker: 1080p, 720p, 480p]
+    Cutter --> Slice1[Slice 1: 0 to 4s]
+    Cutter --> Slice2[Slice 2: 4 to 8s]
+    Cutter --> Slice3[Slice 3: 8 to 12s]
+    
+    Slice1 --> W1[Worker A: Make 1080p, 720p, 480p]
+    Slice2 --> W2[Worker B: Make 1080p, 720p, 480p]
+    Slice3 --> W3[Worker C: Make 1080p, 720p, 480p]
 
-    T1 & T2 & TN --> Stitcher[Manifest Generator & Assembler]
-    Stitcher --> Final[Published Video Status: READY]
+    W1 & W2 & W3 --> Merger[Create Master Playlist]
 ```
 
-* **Chunk Size Optimization**: Segments are split into 2-second to 6-second slices aligned on I-frames (Keyframes). 
-* **Worker Heterogeneity**: GPU workers (NVENC / QuickSync) handle compute-heavy 4K / 1080p AV1 encoding; cheaper CPU spot instances handle 360p / 240p H.264 fallbacks.
-* **Idempotent Tasks**: Each chunk task is identified by `(video_id, chunk_index, target_codec, target_resolution)`. Retries simply overwrite the destination key in S3.
+* **Why cut into 4-second slices?**
+  If we try to convert a 2-hour movie on one single computer, it takes hours. But if we split it into small 4-second slices, 50 worker computers can work on different slices at the exact same time. The video gets ready in just a few minutes.
+* **Smart Failure Recovery:**
+  If Worker B crashes while working on Slice 2, the system automatically gives Slice 2 to another worker without having to restart the whole video.
 
 ---
 
-## 4. Delivery Plane: Multi-Tiered CDN Caching
+## 4. Part 3: Delivering Videos with CDN
 
 ```mermaid
 sequenceDiagram
-    participant Client as Video Player
-    participant Edge as Edge PoP (Local City)
-    participant Shield as Origin Shield CDN
-    participant S3 as Processed S3 Storage
+    participant User as Viewer
+    participant LocalCDN as Local City Cache (CDN)
+    participant CloudStorage as Main Cloud Storage
 
-    Client->>Edge: GET /video_123/1080p_seg001.ts
-    alt Edge Cache Hit (90% of requests)
-        Edge-->>Client: 200 OK (Served from Edge RAM/NVMe)
-    else Edge Cache Miss
-        Edge->>Shield: Forward Request
-        alt Shield Cache Hit (8% of requests)
-            Shield-->>Edge: 200 OK (Cache at Edge)
-            Edge-->>Client: 200 OK
-        else Origin Miss (2% of requests)
-            Shield->>S3: GET from S3
-            S3-->>Shield: Byte Stream
-            Shield-->>Edge: Byte Stream (Cache at Shield)
-            Edge-->>Client: Byte Stream (Cache at Edge)
-        end
+    User->>LocalCDN: Give me slice 001.ts
+    alt Slice is already in local city cache (Cache Hit)
+        LocalCDN-->>User: Sends video immediately (No delay)
+    else Slice is not in local cache (Cache Miss)
+        LocalCDN->>CloudStorage: Fetch slice from main storage
+        CloudStorage-->>LocalCDN: Returns slice
+        LocalCDN-->>User: Sends video and saves a copy locally for next viewer
     end
 ```
 
-### Dynamic Origin Shielding
-To prevent the "Thundering Herd" problem when a major live event or viral video drops, an **Origin Shield layer** aggregates misses from hundreds of global edge PoPs, ensuring that only a single request for a new video chunk ever touches the underlying S3 storage.
+* **What is a CDN?**
+  A Content Delivery Network (CDN) is a network of servers placed in hundreds of cities worldwide.
+* When a popular video is uploaded, its slices are cached on servers near viewers. A viewer in Tokyo gets the video from Tokyo, and a viewer in London gets it from London.
 
 ---
 
-## 5. View Count Aggregation Pipeline
+## 5. Part 4: Counting Views Without Crashing
 
-Updating a database row `views = views + 1` directly on every video playback creates massive row-level write lock contention on viral videos.
+When a video goes viral and millions of people watch it at the same second, updating a database row (`views = views + 1`) millions of times per second will lock the database and crash the site.
 
 ```mermaid
 flowchart LR
-    Player[Video Player] -->|Heartbeat every 30s| IngestAPI[View Tracking API]
-    IngestAPI --> Kafka[Kafka `view_events` Topic]
-    Kafka --> Flink[Apache Flink / Spark Streaming Aggregator]
-    Flink -->|10-second Windowed Aggregates| Redis[(Redis HyperLogLog & Counters)]
-    Redis -->|Periodic Batch Sync| SQL[(Primary Video DB)]
+    Viewer[Viewer watches 30 seconds] --> API[View Tracking API]
+    API --> Queue[Temporary Message Queue]
+    Queue --> FastCache[(Redis Memory Counter)]
+    FastCache -->|Save in bulk every 10 seconds| MainDB[(Main Database)]
 ```
 
-* **Deduplication**: Redis HyperLogLog tracks `(user_id, video_id, date)` to prevent spam/bot view inflation.
-* **Real-time Counts**: Real-time read queries read from Redis counters, while durable batch updates flush to the primary database every 10 seconds.
+* View counts are first incremented in super-fast memory (Redis).
+* Every 10 seconds, the totals are written in bulk to the main database. This keeps the database fast and healthy.

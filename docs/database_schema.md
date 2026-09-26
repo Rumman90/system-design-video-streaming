@@ -1,107 +1,74 @@
-# Database Schema & Storage Architecture
+# Database Design: Video Streaming Platform
 
-This document defines the storage layers, data models, relational schemas, and caching strategies.
+This document outlines the database tables, caching keys, and storage components in simple terms.
 
 ---
 
-## 1. Storage Technology Choices
+## 1. Where Different Types of Data Live
 
-| Data Domain | Storage Engine | Justification |
+| Type of Data | Storage System | Why We Use It |
 | :--- | :--- | :--- |
-| **Video Metadata & User Data** | PostgreSQL / Amazon Aurora | ACID transactions for channel management, video metadata, visibility permissions. |
-| **Video Playback Logs & Telemetry** | ClickHouse / Amazon Timestream | High-throughput columnar store for petabyte-scale analytics and bitrate debugging. |
-| **Realtime Counters & Leases** | Redis Cluster | Ultra-fast atomic increments (`INCRBY`), HyperLogLog for unique views, and distributed locks. |
-| **Video Files, Chunks, Playlists** | AWS S3 / Google Cloud Storage | Unlimited durability (99.999999999%), cheap bulk storage with multi-tier lifecycle rules. |
+| **Video Details & Channels** | PostgreSQL Database | Reliable, structured tables for video titles, descriptions, and user accounts. |
+| **Live View Counters & Tasks** | Redis (Fast Memory) | Super fast in-memory storage for real-time counters and worker task locks. |
+| **Actual Video Files & Slices** | Cloud Storage (Amazon S3) | High durability, low-cost storage for terabytes of video files. |
+| **Analytics & Watch History** | ClickHouse / Columnar DB | Fast queries across billions of daily watch history logs. |
 
 ---
 
-## 2. Relational Schema (PostgreSQL)
+## 2. Core Database Tables (SQL)
 
 ```sql
--- 1. Users / Channels Table
+-- 1. Channels / Creators
 CREATE TABLE channels (
     channel_id VARCHAR(64) PRIMARY KEY,
-    owner_id VARCHAR(64) NOT NULL,
+    name VARCHAR(100) NOT NULL,
     handle VARCHAR(50) UNIQUE NOT NULL,
-    display_name VARCHAR(100) NOT NULL,
     subscriber_count BIGINT DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Videos Table
+-- 2. Videos
 CREATE TABLE videos (
     video_id VARCHAR(64) PRIMARY KEY,
-    channel_id VARCHAR(64) NOT NULL REFERENCES channels(channel_id),
+    channel_id VARCHAR(64) REFERENCES channels(channel_id),
     title VARCHAR(255) NOT NULL,
     description TEXT,
     duration_seconds INT NOT NULL,
-    status VARCHAR(30) NOT NULL DEFAULT 'UPLOADING', -- 'UPLOADING', 'PROCESSING', 'READY', 'FAILED'
-    visibility VARCHAR(20) NOT NULL DEFAULT 'PUBLIC', -- 'PUBLIC', 'UNLISTED', 'PRIVATE'
-    raw_s3_uri VARCHAR(512),
-    manifest_s3_uri VARCHAR(512),
+    status VARCHAR(30) DEFAULT 'PROCESSING', -- 'PROCESSING', 'READY', 'FAILED'
+    manifest_url VARCHAR(512),
     thumbnail_url VARCHAR(512),
     views_count BIGINT DEFAULT 0,
     likes_count BIGINT DEFAULT 0,
-    dislikes_count BIGINT DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    published_at TIMESTAMP WITH TIME ZONE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_videos_channel_id ON videos(channel_id);
-CREATE INDEX idx_videos_status ON videos(status);
-CREATE INDEX idx_videos_published_at ON videos(published_at DESC);
-
--- 3. Video Transcoding Profiles / Asset Tracks
+-- 3. Video Quality Versions (Renditions)
 CREATE TABLE video_renditions (
-    rendition_id BIGSERIAL PRIMARY KEY,
-    video_id VARCHAR(64) NOT NULL REFERENCES videos(video_id) ON DELETE CASCADE,
-    resolution VARCHAR(10) NOT NULL, -- '1080p', '720p', '480p', etc.
+    rendition_id SERIAL PRIMARY KEY,
+    video_id VARCHAR(64) REFERENCES videos(video_id),
+    resolution VARCHAR(10) NOT NULL, -- '1080p', '720p', '480p', '360p'
     bitrate_kbps INT NOT NULL,
-    codec VARCHAR(20) NOT NULL, -- 'h264', 'vp9', 'av1'
-    playlist_path VARCHAR(512) NOT NULL,
-    total_segments INT NOT NULL,
-    total_size_bytes BIGINT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE (video_id, resolution, codec)
+    playlist_url VARCHAR(512) NOT NULL,
+    total_slices INT NOT NULL
 );
 ```
 
 ---
 
-## 3. Distributed Transcoding State Model (Redis / Task Store)
+## 3. Fast In-Memory Keys (Redis)
 
-Redis hashes manage active transcoding tasks and worker leases:
+Redis is used to coordinate live worker tasks and track view counts:
 
 ```text
 Key: job:video:{video_id}
 Type: Hash
-Fields:
-  status: "IN_PROGRESS"
-  total_chunks: 120
-  completed_chunks: 84
-  created_at: 1774590000
+Value: {
+  "status": "PROCESSING",
+  "total_slices": 150,
+  "completed_slices": 95
+}
 
-Key: lock:chunk:{video_id}:{chunk_id}:{resolution}
-Type: String (Value: worker_id, TTL: 60s)
-```
-
----
-
-## 4. Analytical Schema: ClickHouse (Playback Events)
-
-```sql
-CREATE TABLE video_playback_events (
-    event_timestamp DateTime,
-    video_id String,
-    viewer_id String,
-    session_id String,
-    country_code LowCardinality(String),
-    device_type LowCardinality(String),
-    resolution LowCardinality(String),
-    buffer_health_sec Float32,
-    dropped_frames UInt16,
-    bandwidth_kbps UInt32
-) ENGINE = MergeTree()
-PARTITION BY toYYYYMM(event_timestamp)
-ORDER BY (video_id, event_timestamp);
+Key: views:video:{video_id}
+Type: Integer Counter
+Value: 10452
 ```

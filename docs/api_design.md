@@ -1,48 +1,43 @@
-# API Design & Contracts: Video Streaming Platform
+# API Design: Video Streaming Platform
 
-This document outlines the RESTful endpoints, streaming manifest contracts, and real-time WebSocket interfaces.
+This document describes the simple HTTP endpoints and WebSocket messages used to upload videos, fetch video details, and stream content.
 
 ---
 
-## 1. Video Ingestion & Upload APIs
+## 1. Video Upload Endpoints
 
-### 1.1 Initiate Upload Session
-Initiates a multipart upload session and returns signed chunk URLs.
+### 1.1 Start Upload Session
+Creates a new upload session and returns temporary upload links for each piece (chunk) of the file.
 
-- **Method**: `POST`
-- **Path**: `/api/v1/videos/upload-session`
-- **Headers**: `Authorization: Bearer <token>`, `Content-Type: application/json`
+* **Method:** `POST`
+* **Path:** `/api/v1/videos/upload-session`
 
-#### Request Payload
+#### Request Body
 ```json
 {
-  "title": "System Design Video Streaming Deep Dive",
-  "description": "Complete architectural walkthrough of a video streaming platform.",
-  "filename": "video_recording.mp4",
-  "file_size_bytes": 1073741824,
-  "mime_type": "video/mp4",
-  "checksum_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "title": "Introduction to System Design",
+  "description": "A beginner guide to building scalable systems.",
+  "filename": "my_video.mp4",
+  "file_size_bytes": 104857600,
   "chunk_size_bytes": 10485760
 }
 ```
 
-#### Response Payload (`201 Created`)
+#### Response (`201 Created`)
 ```json
 {
-  "video_id": "vid_9a8b7c6d5e4f",
-  "upload_id": "s3_upload_session_xyz890",
+  "video_id": "vid_12345",
+  "upload_id": "upload_abc987",
   "chunk_size_bytes": 10485760,
-  "total_parts": 103,
-  "presigned_parts": [
+  "total_parts": 10,
+  "upload_urls": [
     {
       "part_number": 1,
-      "upload_url": "https://raw-storage.streamhub.com/raw/vid_9a8b7c6d5e4f/part1?signature=abc...",
-      "expires_at": 1774598400
+      "url": "https://storage.streamhub.com/raw/vid_12345/part1?token=xyz..."
     },
     {
       "part_number": 2,
-      "upload_url": "https://raw-storage.streamhub.com/raw/vid_9a8b7c6d5e4f/part2?signature=def...",
-      "expires_at": 1774598400
+      "url": "https://storage.streamhub.com/raw/vid_12345/part2?token=xyz..."
     }
   ]
 }
@@ -50,131 +45,101 @@ Initiates a multipart upload session and returns signed chunk URLs.
 
 ---
 
-### 1.2 Complete Upload Session
-Notifies the system that all parts have been transferred directly to object storage.
+### 1.2 Finish Upload Session
+Tells the server that all pieces have been uploaded so it can start processing the video.
 
-- **Method**: `POST`
-- **Path**: `/api/v1/videos/{video_id}/complete-upload`
+* **Method:** `POST`
+* **Path:** `/api/v1/videos/{video_id}/complete-upload`
 
-#### Request Payload
+#### Request Body
 ```json
 {
-  "upload_id": "s3_upload_session_xyz890",
-  "parts": [
-    {"part_number": 1, "etag": "\"d41d8cd98f00b204e9800998ecf8427e\""},
-    {"part_number": 2, "etag": "\"0cc175b9c0f1b6a831c399e269772661\""},
-    {"part_number": 103, "etag": "\"92eb5ffee6ae2fec3ad71c777531578f\""}
+  "upload_id": "upload_abc987",
+  "uploaded_parts": [
+    {"part_number": 1, "etag": "hash1"},
+    {"part_number": 2, "etag": "hash2"},
+    {"part_number": 10, "etag": "hash10"}
   ]
 }
 ```
 
-#### Response Payload (`202 Accepted`)
+#### Response (`202 Accepted`)
 ```json
 {
-  "video_id": "vid_9a8b7c6d5e4f",
+  "video_id": "vid_12345",
   "status": "PROCESSING",
-  "progress_percentage": 0,
-  "estimated_completion_seconds": 180,
-  "playback_url": null
+  "message": "Upload complete. Video is now being converted."
 }
 ```
 
 ---
 
-## 2. Video Playback & Metadata APIs
+## 2. Video Playback & Details Endpoints
 
-### 2.1 Get Video Details & Streaming Links
-Fetches metadata, view statistics, and the primary HLS/DASH manifest URLs.
+### 2.1 Get Video Details & Streaming Link
+Fetches video information and the link to the playlist file (`master.m3u8`).
 
-- **Method**: `GET`
-- **Path**: `/api/v1/videos/{video_id}`
+* **Method:** `GET`
+* **Path:** `/api/v1/videos/{video_id}`
 
-#### Response Payload (`200 OK`)
+#### Response (`200 OK`)
 ```json
 {
-  "video_id": "vid_9a8b7c6d5e4f",
-  "title": "System Design Video Streaming Deep Dive",
-  "description": "Complete architectural walkthrough of a video streaming platform.",
-  "duration_seconds": 612,
-  "channel": {
-    "channel_id": "chn_101",
-    "name": "Distributed Systems Pro",
-    "avatar_url": "https://cdn.streamhub.com/avatars/chn_101.jpg"
-  },
-  "thumbnails": {
-    "default": "https://cdn.streamhub.com/videos/vid_9a8b7c6d5e4f/thumb_720p.jpg",
-    "storyboard_vtt": "https://cdn.streamhub.com/videos/vid_9a8b7c6d5e4f/storyboard.vtt"
-  },
-  "streaming": {
-    "hls_manifest_url": "https://cdn.streamhub.com/videos/vid_9a8b7c6d5e4f/master.m3u8",
-    "dash_manifest_url": "https://cdn.streamhub.com/videos/vid_9a8b7c6d5e4f/manifest.mpd",
-    "available_resolutions": ["1080p", "720p", "480p", "360p", "240p"],
-    "codecs": ["h264", "vp9", "av1"]
-  },
-  "statistics": {
-    "views_count": 1420500,
-    "likes_count": 89400,
-    "dislikes_count": 312
-  },
-  "created_at": "2026-09-26T08:00:00Z"
-}
-```
-
----
-
-### 2.2 Record Playback Heartbeat / View Telemetry
-Sent periodically by the client player every 30 seconds during active playback.
-
-- **Method**: `POST`
-- **Path**: `/api/v1/telemetry/playback-pulse`
-
-#### Request Payload
-```json
-{
-  "video_id": "vid_9a8b7c6d5e4f",
-  "session_id": "sess_live_9981a2",
-  "current_playback_time_sec": 124.5,
-  "current_resolution": "1080p",
-  "buffer_health_sec": 14.2,
-  "dropped_frames": 0,
-  "client_bandwidth_kbps": 18400
-}
-```
-
-#### Response Payload (`204 No Content`)
-
----
-
-## 3. Realtime Processing Notification (WebSocket)
-
-Creators subscribe to processing progress over a persistent WebSocket connection:
-
-- **Endpoint**: `wss://ws.streamhub.com/v1/notifications?token=<jwt>`
-
-### Event Payload: Transcoding Progress
-```json
-{
-  "event": "VIDEO_TRANSCODING_PROGRESS",
-  "video_id": "vid_9a8b7c6d5e4f",
-  "data": {
-    "status": "TRANSCODING",
-    "completed_chunks": 45,
-    "total_chunks": 60,
-    "percentage": 75,
-    "current_step": "ENCODING_1080P_AV1"
+  "video_id": "vid_12345",
+  "title": "Introduction to System Design",
+  "duration_seconds": 600,
+  "thumbnail_url": "https://cdn.streamhub.com/videos/vid_12345/thumbnail.jpg",
+  "stream_url": "https://cdn.streamhub.com/videos/vid_12345/master.m3u8",
+  "available_qualities": ["1080p", "720p", "480p", "360p"],
+  "stats": {
+    "views": 52400,
+    "likes": 3200
   }
 }
 ```
 
-### Event Payload: Transcoding Complete (Ready to Stream)
+---
+
+### 2.2 Record View Activity (Heartbeat)
+The video player on your phone or computer sends this ping every 30 seconds while you watch to update view counts and watch time statistics.
+
+* **Method:** `POST`
+* **Path:** `/api/v1/telemetry/playback-pulse`
+
+#### Request Body
+```json
+{
+  "video_id": "vid_12345",
+  "current_time_seconds": 120,
+  "current_quality": "720p"
+}
+```
+
+#### Response (`204 No Content`)
+
+---
+
+## 3. Realtime Notification (WebSocket)
+
+When a creator uploads a video, their browser stays connected via WebSocket to receive live progress updates:
+
+* **Endpoint:** `wss://ws.streamhub.com/v1/notifications`
+
+### Example Progress Event
+```json
+{
+  "event": "CONVERSION_PROGRESS",
+  "video_id": "vid_12345",
+  "progress_percentage": 65,
+  "status": "CONVERTING_720P"
+}
+```
+
+### Example Video Ready Event
 ```json
 {
   "event": "VIDEO_READY",
-  "video_id": "vid_9a8b7c6d5e4f",
-  "data": {
-    "status": "READY",
-    "hls_manifest_url": "https://cdn.streamhub.com/videos/vid_9a8b7c6d5e4f/master.m3u8",
-    "published_at": "2026-09-26T08:05:22Z"
-  }
+  "video_id": "vid_12345",
+  "stream_url": "https://cdn.streamhub.com/videos/vid_12345/master.m3u8"
 }
 ```

@@ -1,10 +1,12 @@
-# Video Streaming Implementation Pseudo-code
+# Implementation Examples & Code Snippets
 
-This document provides sample pseudo-code for the critical operations: GOP chunking, parallel FFmpeg worker execution, and client ABR bitrate selection.
+This document contains simple, commented code examples for:
+1. Converting video slices using FFmpeg in Python.
+2. Adaptive Bitrate (ABR) quality selection algorithm in TypeScript.
 
 ---
 
-## 1. Transcoding Worker: Splitting and FFmpeg Chunk Encoding (Python)
+## 1. Python Worker: Slicing and Converting a Video Chunk
 
 ```python
 import subprocess
@@ -15,99 +17,91 @@ class TranscoderWorker:
         self.s3 = s3_client
         self.redis = redis_client
 
-    def process_chunk_task(self, video_id: str, chunk_index: int, start_time_sec: float, duration_sec: float, profile: dict):
+    def convert_slice(self, video_id: str, slice_index: int, start_time: float, duration: float, target_resolution: str):
         """
-        Transcodes a single GOP segment into target profile with exact keyframe alignment.
+        Converts a single 4-second slice of video into a specific quality.
         """
-        lease_key = f"lock:chunk:{video_id}:{chunk_index}:{profile['resolution']}"
-        worker_id = os.getenv("HOSTNAME", "worker_node_1")
+        lease_key = f"lock:slice:{video_id}:{slice_index}:{target_resolution}"
+        worker_id = os.getenv("HOSTNAME", "worker_1")
 
-        # 1. Acquire Redis Lease (60s TTL)
+        # 1. Take a 60-second lease so no other worker does duplicate work
         if not self.redis.set(lease_key, worker_id, nx=True, ex=60):
-            print(f"Task already owned by another worker, skipping.")
+            print("Another worker is already converting this slice.")
             return
 
-        input_chunk_path = f"/tmp/{video_id}_input.mp4"
-        output_ts_path = f"/tmp/{video_id}_{profile['resolution']}_seg{chunk_index:04d}.ts"
+        input_file = f"/tmp/{video_id}_raw.mp4"
+        output_file = f"/tmp/{video_id}_{target_resolution}_slice_{slice_index:04d}.ts"
 
         try:
-            # 2. Transcode chunk using hardware accelerated FFmpeg with closed GOP
+            # 2. Run FFmpeg to cut and convert the slice
             cmd = [
                 "ffmpeg", "-y",
-                "-ss", str(start_time_sec),
-                "-t", str(duration_sec),
-                "-i", input_chunk_path,
-                "-vf", f"scale={profile['width']}:{profile['height']}",
+                "-ss", str(start_time),
+                "-t", str(duration),
+                "-i", input_file,
+                "-vf", f"scale=-2:{target_resolution.replace('p', '')}",
                 "-c:v", "libx264",
-                "-b:v", f"{profile['bitrate_kbps']}k",
-                "-maxrate", f"{int(profile['bitrate_kbps'] * 1.2)}k",
-                "-bufsize", f"{int(profile['bitrate_kbps'] * 2)}k",
-                "-g", "120",                # GOP Size: Force I-frame every 4 seconds (30fps)
-                "-keyint_min", "120",
-                "-sc_threshold", "0",        # Disable dynamic scene cut keyframes
                 "-c:a", "aac",
-                "-b:a", f"{profile['audio_bitrate_kbps']}k",
                 "-f", "mpegts",
-                output_ts_path
+                output_file
             ]
-            
             subprocess.run(cmd, check=True)
 
-            # 3. Upload chunk directly to Processed Media S3 Bucket
-            s3_key = f"videos/{video_id}/{profile['resolution']}/segment_{chunk_index:04d}.ts"
-            self.s3.upload_file(output_ts_path, "processed-media-bucket", s3_key)
+            # 3. Upload the converted slice directly to cloud storage
+            s3_path = f"videos/{video_id}/{target_resolution}/slice_{slice_index:04d}.ts"
+            self.s3.upload_file(output_file, "my-video-storage", s3_path)
 
-            # 4. Mark chunk complete in Redis Task Hash
-            self.redis.hincrby(f"job:video:{video_id}", "completed_chunks", 1)
-            print(f"Successfully processed chunk {chunk_index} for {profile['resolution']}")
+            # 4. Increment the completed count in Redis
+            self.redis.hincrby(f"job:video:{video_id}", "completed_slices", 1)
+            print(f"Finished slice {slice_index} for {target_resolution}")
 
         finally:
-            if os.path.exists(output_ts_path):
-                os.remove(output_ts_path)
+            if os.path.exists(output_file):
+                os.remove(output_file)
             self.redis.delete(lease_key)
 ```
 
 ---
 
-## 2. Client-Side Adaptive Bitrate (ABR) Selection Algorithm (JavaScript / TypeScript)
+## 2. Video Player: Adaptive Quality Selection (TypeScript)
 
 ```typescript
-interface RenditionVariant {
-  resolution: string;
-  bandwidthBps: number; // e.g. 4500000 for 1080p
+interface VideoQuality {
+  name: string;             // e.g. "1080p", "720p", "480p", "360p"
+  requiredBandwidthBps: number; // e.g. 4500000 (4.5 Mbps)
 }
 
 class AdaptiveBitrateEngine {
-  private variants: RenditionVariant[];
-  private safetyHeadroomFactor: number = 0.8; // Use max 80% of measured bandwidth
+  private qualities: VideoQuality[];
 
-  constructor(variants: RenditionVariant[]) {
-    // Sort renditions in descending order of bandwidth
-    this.variants = variants.sort((a, b) => b.bandwidthBps - a.bandwidthBps);
+  constructor(qualities: VideoQuality[]) {
+    // Sort qualities from highest to lowest
+    this.qualities = qualities.sort(
+      (a, b) => b.requiredBandwidthBps - a.requiredBandwidthBps
+    );
   }
 
-  public selectOptimalVariant(
+  public chooseNextQuality(
     measuredBandwidthBps: number,
-    bufferDurationSec: number
-  ): RenditionVariant {
-    // 1. Buffer Danger Rule (Avoid playback stalls)
-    if (bufferDurationSec < 5.0) {
-      // Pick lowest available quality immediately to prevent freeze
-      return this.variants[this.variants.length - 1];
+    bufferRemainingSeconds: number
+  ): VideoQuality {
+    // Rule 1: Emergency buffer protection
+    // If less than 4 seconds of video is buffered, drop to lowest quality immediately
+    if (bufferRemainingSeconds < 4.0) {
+      return this.qualities[this.qualities.length - 1];
     }
 
-    // 2. Safe Bandwidth Calculation
-    const effectiveBandwidth = measuredBandwidthBps * this.safetyHeadroomFactor;
+    // Rule 2: Pick the highest quality that comfortably fits current internet speed (using 80% safety margin)
+    const safeBandwidth = measuredBandwidthBps * 0.8;
 
-    // 3. Find highest quality that fits inside effective bandwidth
-    for (const variant of this.variants) {
-      if (effectiveBandwidth >= variant.bandwidthBps) {
-        return variant;
+    for (const quality of this.qualities) {
+      if (safeBandwidth >= quality.requiredBandwidthBps) {
+        return quality;
       }
     }
 
-    // Default to lowest resolution if bandwidth is extremely constrained
-    return this.variants[this.variants.length - 1];
+    // Default to the lowest quality if internet is very slow
+    return this.qualities[this.qualities.length - 1];
   }
 }
 ```
