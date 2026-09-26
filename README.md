@@ -52,12 +52,16 @@ Below is the complete mathematical breakdown of traffic, storage, and network ba
 * **Average Video Length:** 10 minutes (600 seconds)
 
 #### Uploads per Second (Upload QPS)
-$$\text{Average Upload QPS} = \frac{500,000 \text{ uploads}}{86,400 \text{ seconds/day}} \approx 5.78 \text{ uploads/second}$$
-$$\text{Peak Upload QPS (3x peak factor)} = 5.78 \times 3 \approx 17.3 \text{ uploads/second}$$
+```text
+Average Upload QPS = 500,000 uploads / 86,400 seconds ≈ 5.78 uploads/second
+Peak Upload QPS (3x peak factor) = 5.78 × 3 ≈ 17.3 uploads/second
+```
 
 #### Video Views per Second (Playback QPS)
-$$\text{Average View QPS} = \frac{1,000,000,000 \text{ views}}{86,400 \text{ seconds/day}} \approx 11,574 \text{ views/second}$$
-$$\text{Peak View QPS (3x peak factor)} = 11,574 \times 3 \approx 34,722 \text{ views/second}$$
+```text
+Average View QPS = 1,000,000,000 views / 86,400 seconds ≈ 11,574 views/second
+Peak View QPS (3x peak factor) = 11,574 × 3 ≈ 34,722 views/second
+```
 
 ---
 
@@ -66,50 +70,80 @@ $$\text{Peak View QPS (3x peak factor)} = 11,574 \times 3 \approx 34,722 \text{ 
 #### Step 1: Raw Video Upload Size
 * Average raw 1080p video bitrate = **6.67 Mbps**
 * Size of one 10-minute raw video:
-  $$\text{Raw File Size} = 600 \text{ seconds} \times \frac{6.67 \text{ Megabits/sec}}{8 \text{ bits/byte}} = 600 \times 0.833 \text{ MB/sec} \approx 500 \text{ MB}$$
+```text
+Raw File Size = 600 seconds × (6.67 Mbps / 8 bits per byte)
+              = 600 seconds × 0.833 MB/s
+              ≈ 500 MB per video
+```
 
 * Total daily raw storage:
-  $$\text{Daily Raw Storage} = 500,000 \text{ uploads} \times 500 \text{ MB} = 250,000,000 \text{ MB} = 250 \text{ TB / day}$$
+```text
+Daily Raw Storage = 500,000 uploads × 500 MB
+                  = 250,000,000 MB
+                  = 250 TB / day
+```
 
 #### Step 2: Converted (Transcoded) Resolutions Size
 Each uploaded video is converted into 4 quality levels for adaptive streaming:
 
-| Resolution | Video Bitrate | Formula | Size for 10-min Video |
+| Resolution | Video Bitrate | Calculation Formula | Size for 10-min Video |
 | :--- | :--- | :--- | :--- |
-| **1080p (Full HD)** | 4.5 Mbps | $600 \text{s} \times (4.5 / 8) \text{ MB/s}$ | $337.5 \text{ MB}$ |
-| **720p (HD)** | 2.2 Mbps | $600 \text{s} \times (2.2 / 8) \text{ MB/s}$ | $165.0 \text{ MB}$ |
-| **480p (SD)** | 1.0 Mbps | $600 \text{s} \times (1.0 / 8) \text{ MB/s}$ | $75.0 \text{ MB}$ |
-| **360p (Low)** | 0.5 Mbps | $600 \text{s} \times (0.5 / 8) \text{ MB/s}$ | $37.5 \text{ MB}$ |
-| **Total Converted per Video** | — | **Sum of all 4 resolutions** | **615.0 MB** |
+| **1080p (Full HD)** | 4.5 Mbps | `600s × (4.5 / 8) MB/s` | **337.5 MB** |
+| **720p (HD)** | 2.2 Mbps | `600s × (2.2 / 8) MB/s` | **165.0 MB** |
+| **480p (SD)** | 1.0 Mbps | `600s × (1.0 / 8) MB/s` | **75.0 MB** |
+| **360p (Low)** | 0.5 Mbps | `600s × (0.5 / 8) MB/s` | **37.5 MB** |
+| **Total Converted per Video** | — | `Sum of all 4 resolutions` | **615.0 MB** |
 
 * Total daily converted storage:
-  $$\text{Daily Transcoded Storage} = 500,000 \text{ uploads} \times 615 \text{ MB} = 307,500,000 \text{ MB} = 307.5 \text{ TB / day}$$
+```text
+Daily Transcoded Storage = 500,000 uploads × 615 MB
+                         = 307,500,000 MB
+                         = 307.5 TB / day
+```
 
 #### Step 3: Total Combined Daily & Annual Storage
-$$\text{Total Daily Storage} = 250 \text{ TB (Raw)} + 307.5 \text{ TB (Transcoded)} = 557.5 \text{ TB / day}$$
-$$\text{1-Year Storage Required} = 557.5 \text{ TB/day} \times 365 \text{ days} \approx 203,487 \text{ TB} \approx 203.5 \text{ Petabytes (PB) / year}$$
+```text
+Total Daily Storage = 250 TB (Raw) + 307.5 TB (Transcoded) = 557.5 TB / day
+1-Year Storage Required = 557.5 TB/day × 365 days ≈ 203,487 TB ≈ 203.5 PB / year
+```
 
 ---
 
 ### 3.3 Network Bandwidth Calculations
 
 #### Inbound Upload Bandwidth (Ingestion)
-$$\text{Average Inbound Bandwidth} = \frac{250 \text{ TB} \times 8 \times 10^6 \text{ Megabits}}{86,400 \text{ seconds}} \approx 23,148 \text{ Mbps} \approx 23.15 \text{ Gbps}$$
-$$\text{Peak Inbound Bandwidth (2.5x)} = 23.15 \text{ Gbps} \times 2.5 \approx 57.87 \text{ Gbps}$$
+```text
+Average Inbound Bandwidth = (250 TB × 8 × 1,000,000 Megabits) / 86,400 seconds
+                          ≈ 23,148 Mbps
+                          ≈ 23.15 Gbps
+
+Peak Inbound Bandwidth (2.5x) = 23.15 Gbps × 2.5 ≈ 57.87 Gbps
+```
 
 #### Outbound Streaming Bandwidth (Egress via CDN)
 * Average daily watch time per user = **30 minutes**
 * Total viewing time per day across all users:
-  $$\text{Total Daily Watch Time} = 100,000,000 \text{ users} \times 30 \text{ minutes} = 3,000,000,000 \text{ minutes / day}$$
+```text
+Total Daily Watch Time = 100,000,000 users × 30 minutes = 3,000,000,000 minutes / day
+```
 
 * Average concurrent video streams running at any given minute:
-  $$\text{Average Concurrent Streams} = \frac{3,000,000,000 \text{ minutes}}{1,440 \text{ minutes in a day}} \approx 2,083,333 \text{ active streams}$$
+```text
+Average Concurrent Streams = 3,000,000,000 minutes / 1,440 minutes in a day
+                           ≈ 2,083,333 active streams
+```
 
 * Peak concurrent streams during busy evening hours (3.5x peak factor):
-  $$\text{Peak Concurrent Streams} = 2,083,333 \times 3.5 \approx 7,291,665 \text{ streams} \approx 7.3 \text{ Million streams}$$
+```text
+Peak Concurrent Streams = 2,083,333 × 3.5 ≈ 7,291,665 streams (≈ 7.3 Million streams)
+```
 
 * Average playback bitrate across all viewers (mix of 1080p, 720p, 480p) = **2.5 Mbps**:
-  $$\text{Peak Egress Bandwidth} = 7,291,665 \text{ streams} \times 2.5 \text{ Mbps} = 18,229,162 \text{ Mbps} \approx 18.23 \text{ Terabits per second (Tbps)}$$
+```text
+Peak Egress Bandwidth = 7,291,665 streams × 2.5 Mbps
+                      = 18,229,162 Mbps
+                      ≈ 18.23 Terabits per second (Tbps)
+```
 
 > **Key Takeaway:** Delivering **18.23 Tbps** directly from central data centers is impossible and cost-prohibitive. This traffic is served by caching video slices on global **Content Delivery Networks (CDNs)** near the users.
 
@@ -189,25 +223,25 @@ sequenceDiagram
 
 Read detailed guides on every component of this design:
 
-* [System Architecture & Components](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/architecture.md)
-* [API Design & Endpoints](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/api_design.md)
-* [Capacity Planning & Math](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/capacity_planning.md)
-* [Transcoding Pipeline & Workflows](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/transcoding_pipeline_dag.md)
-* [HLS & DASH Streaming Explained](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/hls_dash_streaming.md)
-* [Database Schema & Data Model](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/database_schema.md)
-* [CDN & Caching Strategy](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/cdn_and_caching_strategy.md)
-* [Failure Handling & Recovery](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/docs/failure_scenarios.md)
+* [System Architecture & Components](docs/architecture.md)
+* [API Design & Endpoints](docs/api_design.md)
+* [Capacity Planning & Math](docs/capacity_planning.md)
+* [Transcoding Pipeline & Workflows](docs/transcoding_pipeline_dag.md)
+* [HLS & DASH Streaming Explained](docs/hls_dash_streaming.md)
+* [Database Schema & Data Model](docs/database_schema.md)
+* [CDN & Caching Strategy](docs/cdn_and_caching_strategy.md)
+* [Failure Handling & Recovery](docs/failure_scenarios.md)
 
 ---
 
 ## 7. Code & Examples
 
-* [Sample HLS Master Playlist](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/master_playlist.m3u8)
-* [Sample Transcoding Task Event](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/sample_transcoding_job.json)
-* [Transcoder & Player Code Examples](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/examples/pseudo_code.md)
+* [Sample HLS Master Playlist](examples/master_playlist.m3u8)
+* [Sample Transcoding Task Event](examples/sample_transcoding_job.json)
+* [Transcoder & Player Code Examples](examples/pseudo_code.md)
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](file:///Users/rummansiddiqui/Downloads/systemdesigns/system-design-video-streaming/LICENSE) file for details.
+This project is licensed under the [MIT License](LICENSE).
