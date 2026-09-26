@@ -1,0 +1,49 @@
+{
+  "event_id": "evt_tr_99812480",
+  "event_type": "VIDEO_INGESTED_START_TRANSCODE",
+  "timestamp": "2026-09-26T08:00:15Z",
+  "video": {
+    "video_id": "vid_9a8b7c6d5e4f",
+    "channel_id": "chn_101",
+    "raw_s3_bucket": "media-raw-ingest-prod",
+    "raw_s3_key": "uploads/vid_9a8b7c6d5e4f/raw_input.mp4",
+    "duration_seconds": 612.45,
+    "source_metadata": {
+      "codec": "h264",
+      "resolution": "3840x2160",
+      "frame_rate": 60,
+      "color_depth": "8bit",
+      "audio_channels": 2
+    }
+  },
+  "transcoding_plan": {
+    "gop_segment_duration_seconds": 4.0,
+    "total_chunks_expected": 154,
+    "target_renditions": [
+      {
+        "resolution": "1080p",
+        "codec": "h264",
+        "video_bitrate_kbps": 4500,
+        "audio_bitrate_kbps": 128
+      },
+      {
+        "resolution": "720p",
+        "codec": "h264",
+        "video_bitrate_kbps": 2200,
+        "audio_bitrate_kbps": 128
+      },
+      {
+        "resolution": "480p",
+        "codec": "h264",
+        "video_bitrate_kbps": 1000,
+        "audio_bitrate_kbps": 96
+      }
+    ],
+    "auxiliary_tasks": [
+      "EXTRACT_AUDIO_MASTER",
+      "GENERATE_STORYBOARD_SPRITE",
+      "EXTRACT_HIGH_RES_THUMBNAILS",
+      "GENERATE_SPEECH_SUBTITLES"
+    ]
+  }
+}
